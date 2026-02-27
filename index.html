@@ -486,41 +486,73 @@
         </div>
     </div>
 
-    <script>
-        let editingIndex = null;
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
 
-        // Load signatures from localStorage
+    <script>
+        // TODO: Replace with your Firebase config from Step 2
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT_ID-default-rtdb.firebaseio.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        // Initialize Firebase
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const database = firebase.database();
+        const signaturesRef = database.ref('signatures');
+
+        let editingIndex = null;
+        let signaturesData = {};
+
+        // Load signatures from Firebase
         function loadSignatures() {
-            const signatures = JSON.parse(localStorage.getItem('tamiSignatures') || '[]');
             const container = document.getElementById('signatures-container');
 
-            if (signatures.length === 0) {
-                container.innerHTML = '<p style="color: #999; text-align: center; padding: 30px; font-size: 1.2rem;">🎈 Be the first to sign Tami\'s card! 🎈</p>';
-                return;
-            }
+            signaturesRef.on('value', (snapshot) => {
+                signaturesData = snapshot.val() || {};
+                const signatures = Object.entries(signaturesData).map(([key, value]) => ({
+                    id: key,
+                    ...value
+                }));
 
-            container.innerHTML = signatures.map((sig, index) => `
-                <div class="signature">
-                    <div class="signature-name">🎊 ${escapeHtml(sig.name)}</div>
-                    <div class="signature-message">"${escapeHtml(sig.message)}"</div>
-                    <div class="signature-actions">
-                        <button class="btn-edit" onclick="editSignature(${index})">✏️ Edit</button>
-                        <button class="btn-delete" onclick="deleteSignature(${index})">🗑️ Delete</button>
+                if (signatures.length === 0) {
+                    container.innerHTML = '<p style="color: #999; text-align: center; padding: 30px; font-size: 1.2rem;">🎈 Be the first to sign Tami\'s card! 🎈</p>';
+                    return;
+                }
+
+                // Sort by timestamp
+                signatures.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+                container.innerHTML = signatures.map((sig) => `
+                    <div class="signature">
+                        <div class="signature-name">🎊 ${escapeHtml(sig.name)}</div>
+                        <div class="signature-message">"${escapeHtml(sig.message)}"</div>
+                        <div class="signature-actions">
+                            <button class="btn-edit" onclick="editSignature('${sig.id}')">✏️ Edit</button>
+                            <button class="btn-delete" onclick="deleteSignature('${sig.id}')">🗑️ Delete</button>
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `).join('');
+            });
         }
 
         // Edit signature
-        function editSignature(index) {
-            const signatures = JSON.parse(localStorage.getItem('tamiSignatures') || '[]');
-            const sig = signatures[index];
+        function editSignature(id) {
+            const sig = signaturesData[id];
 
             // Populate form
             document.getElementById('name').value = sig.name;
             document.getElementById('message').value = sig.message;
-            document.getElementById('editing-index').value = index;
-            editingIndex = index;
+            document.getElementById('editing-index').value = id;
+            editingIndex = id;
 
             // Update UI
             document.getElementById('submit-btn').textContent = '💾 Update My Message';
@@ -532,15 +564,18 @@
         }
 
         // Delete signature
-        function deleteSignature(index) {
+        function deleteSignature(id) {
             if (!confirm('Are you sure you want to delete this message?')) {
                 return;
             }
 
-            const signatures = JSON.parse(localStorage.getItem('tamiSignatures') || '[]');
-            signatures.splice(index, 1);
-            localStorage.setItem('tamiSignatures', JSON.stringify(signatures));
-            loadSignatures();
+            signaturesRef.child(id).remove()
+                .then(() => {
+                    showSuccess('🗑️ Message deleted!');
+                })
+                .catch((error) => {
+                    alert('Error deleting message: ' + error.message);
+                });
         }
 
         // Cancel editing
@@ -601,45 +636,51 @@
                 return;
             }
 
-            // Get existing signatures
-            const signatures = JSON.parse(localStorage.getItem('tamiSignatures') || '[]');
+            const signatureData = {
+                name: name,
+                message: message
+            };
 
             if (editIndex !== '') {
                 // Update existing signature
-                signatures[parseInt(editIndex)] = {
-                    name: name,
-                    message: message,
-                    timestamp: signatures[parseInt(editIndex)].timestamp,
-                    lastEdited: new Date().toISOString()
-                };
-                showSuccess('✅ Your message has been updated! ✨');
+                signatureData.timestamp = signaturesData[editIndex].timestamp;
+                signatureData.lastEdited = new Date().toISOString();
+
+                signaturesRef.child(editIndex).update(signatureData)
+                    .then(() => {
+                        showSuccess('✅ Your message has been updated! ✨');
+                        resetForm();
+                        createCelebration();
+                    })
+                    .catch((error) => {
+                        alert('Error updating message: ' + error.message);
+                    });
             } else {
                 // Add new signature
-                signatures.push({
-                    name: name,
-                    message: message,
-                    timestamp: new Date().toISOString()
-                });
-                showSuccess('✨ Your birthday wish has been added! ✨');
+                signatureData.timestamp = new Date().toISOString();
+
+                signaturesRef.push(signatureData)
+                    .then(() => {
+                        showSuccess('✨ Your birthday wish has been added! ✨');
+                        resetForm();
+                        createCelebration();
+                    })
+                    .catch((error) => {
+                        alert('Error adding message: ' + error.message);
+                    });
             }
+        });
 
-            // Save to localStorage
-            localStorage.setItem('tamiSignatures', JSON.stringify(signatures));
-
-            // Reset form
-            resetForm();
-
-            // Reload signatures
-            loadSignatures();
-
-            // Create celebration hearts
+        // Create celebration hearts
+        function createCelebration() {
             for (let i = 0; i < 10; i++) {
                 setTimeout(() => createHeart(), i * 100);
             }
-
             // Scroll to signatures
-            document.getElementById('signatures-container').scrollIntoView({ behavior: 'smooth' });
-        });
+            setTimeout(() => {
+                document.getElementById('signatures-container').scrollIntoView({ behavior: 'smooth' });
+            }, 500);
+        }
 
         // Load signatures on page load
         loadSignatures();
